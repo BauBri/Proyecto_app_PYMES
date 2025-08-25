@@ -1,1 +1,5 @@
 streamlit
+scikit-fuzzy
+plotly
+scipy
+pandas
