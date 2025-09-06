@@ -10,11 +10,10 @@ from base_difusa import fuzificar_resumen, desdifuzificar
 # Configuración de la página
 # ──────────────────────────────
 st.set_page_config(
-    page_title="PyME · Analítica Difusa de Ventas",
+    page_title="Estimador de datos con Lógica difusa",
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
 
 st.markdown(
     """
@@ -24,7 +23,7 @@ st.markdown(
         padding: 28px 36px;
         border-radius: 18px;
         background: rgba(255,255,255,0.03);
-        border: 1px solid rgba(212,175,55,0.35); /* dorado suave */
+        border: 1px solid rgba(212,175,55,0.35);
         box-shadow: 0 2px 14px rgba(0,0,0,0.25) inset, 0 4px 20px rgba(212,175,55,0.10);
       }
       .hero h1 {
@@ -42,112 +41,144 @@ st.markdown(
         color: #e6e6e6;
         opacity: .85;
       }
+      /* KPI grande del resultado */
+      .kpi {
+        margin-top: 8px;
+        padding: 18px 22px;
+        border-radius: 16px;
+        border: 1px solid rgba(212,175,55,0.40);
+        background: rgba(212,175,55,0.06);
+      }
+      .kpi-label {
+        font-size: 0.95rem;
+        opacity: .85;
+        letter-spacing: .2px;
+      }
+      .kpi-value {
+        font-size: clamp(36px, 6vw, 68px);
+        font-weight: 700;
+        line-height: 1.05;
+        margin-top: 4px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-weight: 600;
+        border: 1px solid rgba(255,255,255,0.25);
+        margin-top: 8px;
+      }
+      .pill-baja  { background: rgba(0,128,255,0.12); }
+      .pill-media { background: rgba(255,165,0,0.14); }
+      .pill-alta  { background: rgba(0,200,83,0.14); }
+      .pill-inst  { background: rgba(255,0,0,0.14); }
     </style>
     <div class="hero">
-      <h1>Proyecto Servicio Social para PyMEs</h1>
-      <p>Ingrese ventas mínima, promedio y máxima. El sistema aplica lógica difusa para estimar un valor representativo y pertenencias (Baja/Media/Alta).</p>
+      <h1>Estimador de datos con Lógica difusa</h1>
+      <p>
+        El sistema estima un valor representativo y
+        los grados de pertenencia (Baja/Media/Alta).
+      </p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-
+# Estado
 if "escenarios" not in st.session_state:
     st.session_state.escenarios = []
 
 DEFAULTS = {
     "vmin": 100.0, "vavg": 150.0, "vmax": 220.0,
     "metodo": "centroid", "forma": "trap",
-    "sensibilidad": 1.00,
-    "umbral_margen": 0.20
+    "sensibilidad": 1.00, "umbral_margen": 0.20
 }
 if "ultimo" not in st.session_state:
     st.session_state.ultimo = DEFAULTS.copy()
 
-
 def q_from_min_prom_max(vmin: float, vavg: float, vmax: float):
-    """Aproxima Q1, Q2, Q3 a partir de (mín, prom, máx)."""
     q1 = (2 * vmin + vavg) / 3.0
     q2 = vavg
     q3 = (2 * vmax + vavg) / 3.0
     return float(q1), float(q2), float(q3)
 
 def _marcar_valor_y_cuartiles(fig, x, L, M, H, valor: float, Qs):
-    """Añade la línea vertical del valor y los puntos Q1–Q3 en L, M y H."""
     vline_y = np.array([0.0, 1.0])
     for r in (1, 2, 3):
         fig.add_trace(
             go.Scatter(
                 x=[valor, valor], y=vline_y, mode="lines",
-                name="Valor desdifuzificado" if r == 1 else None,
-                showlegend=(r == 1),
-                line=dict(width=2, dash="dot")
+                name="Valor desdifusificado" if r == 1 else None,
+                showlegend=(r == 1), line=dict(width=2, dash="dot")
             ),
             row=r, col=1
         )
-    for q, lab in zip(Qs, ("Q1", "Q2", "Q3")):
-        fig.add_trace(
-            go.Scatter(
-                x=[q], y=[fuzz.interp_membership(x, L, q)],
-                mode="markers", name=lab, marker=dict(size=8)
-            ),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=[q], y=[fuzz.interp_membership(x, M, q)],
-                mode="markers", showlegend=False, marker=dict(size=8)
-            ),
-            row=2, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=[q], y=[fuzz.interp_membership(x, H, q)],
-                mode="markers", showlegend=False, marker=dict(size=8)
-            ),
-            row=3, col=1
-        )
+    for q in Qs:
+        fig.add_trace(go.Scatter(x=[q], y=[fuzz.interp_membership(x, L, q)],
+                                 mode="markers", name="Q", marker=dict(size=8)),
+                      row=1, col=1)
+        fig.add_trace(go.Scatter(x=[q], y=[fuzz.interp_membership(x, M, q)],
+                                 mode="markers", showlegend=False, marker=dict(size=8)),
+                      row=2, col=1)
+        fig.add_trace(go.Scatter(x=[q], y=[fuzz.interp_membership(x, H, q)],
+                                 mode="markers", showlegend=False, marker=dict(size=8)),
+                      row=3, col=1)
 
-
+# ──────────────────────────────
+# Sidebar — controles reactivos (SIN form)
+# ──────────────────────────────
 with st.sidebar:
-    st.image("unam_logo.png", use_container_width=True)
     st.header("Parámetros de entrada")
 
-    with st.form("form_inputs", clear_on_submit=False):
+    forma_num_dif = st.selectbox(
+    "Función de membresía (forma del número difuso)",
+    options=["Triangular (3 datos)", "Trapezoidal (N datos)"],
+    index=0,
+    help="Define la forma de las funciones de membresía L–M–H: Triangular (pico nítido en el centro) o Trapezoidal (meseta que aporta tolerancia)."
+)
+
+    modo_triangular = forma_num_dif.startswith("Triangular")
+
+    if modo_triangular:
         vmin = st.number_input(
-            "Venta mínima",
+            "Dato mínimo",
             value=float(st.session_state.ultimo["vmin"]),
-            step=10.0, format="%.2f",
-            help="Valor más bajo observado en el periodo."
+            step=0.01, format="%.2f", key="vmin_tri"
         )
         vavg = st.number_input(
-            "Venta promedio",
+            "Dato promedio",
             value=float(st.session_state.ultimo["vavg"]),
-            step=10.0, format="%.2f",
-            help="Promedio del periodo. Centro del número difuso."
+            step=0.01, format="%.2f", key="vavg_tri"
         )
         vmax = st.number_input(
-            "Venta máxima",
+            "Dato máximo",
             value=float(st.session_state.ultimo["vmax"]),
-            step=10.0, format="%.2f",
-            help="Valor más alto observado en el periodo."
+            step=0.01, format="%.2f", key="vmax_tri"
         )
+        datos_arr = None
+    else:
+        N = int(st.number_input(
+            "Cantidad de datos (N)", min_value=3, max_value=30, value=6, step=1, key="N_trap"
+        ))
+        base_min = float(st.session_state.ultimo["vmin"])
+        base_max = float(st.session_state.ultimo["vmax"])
+        base_vals = np.linspace(base_min, base_max, N)
 
-        st.divider()
-        st.subheader("Configuración difusa")
+        cols = st.columns(3)
+        datos = []
+        for i in range(N):
+            col = cols[i % 3]
+            default_val = float(base_vals[i])
+            datos.append(col.number_input(
+                f"Dato #{i+1}", value=default_val, step=0.01, format="%.2f", key=f"dato_{i}"
+            ))
+        datos_arr = np.array(datos, dtype=float)
+        vmin, vmax, vavg = float(np.min(datos_arr)), float(np.max(datos_arr)), float(np.mean(datos_arr))
 
-        forma_lbl = st.selectbox(
-            "Función de membresía (L–M–H)",
-            options=[
-                "Trapezoidal (L/H) + Triangular (M)",
-                "Triangular (L–M–H)",
-            ],
-            index=0,
-            help="Triangular = más nítida. Trapezoidal = tolerante (meseta)."
-        )
-
+    # Controles de configuración + botón dentro de form
+    with st.form("form_config", clear_on_submit=False):
         metodo = st.selectbox(
-            "Desdifusificación",
+            "Método de desdifusificación",
             options=[
                 "Centroide (promedio ponderado)",
                 "Bisector (divide el área en dos partes iguales)",
@@ -155,29 +186,26 @@ with st.sidebar:
                 "Mínimo de los máximos",
                 "Máximo de los máximos"
             ],
-            index=0,
-            help="Cómo obtener el valor representativo."
+            index=0
         )
-
         with st.expander("Ajustes avanzados"):
             sensibilidad = st.slider(
                 "Sensibilidad de estabilidad",
                 min_value=0.80, max_value=1.20,
                 value=float(st.session_state.ultimo["sensibilidad"]),
-                step=0.01,
-                help="0.8 = más estricta, 1.2 = más laxa."
+                step=0.01
             )
             umbral_margen = st.slider(
                 "Umbral de inestabilidad (margen)",
                 min_value=0.10, max_value=0.30,
                 value=float(st.session_state.ultimo["umbral_margen"]),
-                step=0.01,
-                help="Si la diferencia entre el 1º y 2º mayor grado < umbral ⇒ 'Inestable'."
+                step=0.01
             )
-
         submit = st.form_submit_button("Calcular diagnóstico", use_container_width=True)
 
-
+# ──────────────────────────────
+# Lógica de mapeo y cálculo
+# ──────────────────────────────
 mapa_metodos = {
     "Centroide (promedio ponderado)": "centroid",
     "Bisector (divide el área en dos partes iguales)": "bisector",
@@ -186,141 +214,134 @@ mapa_metodos = {
     "Máximo de los máximos": "lom",
 }
 metodo_key = mapa_metodos[metodo]
-
-mapa_forma = {
-    "Trapezoidal (L/H) + Triangular (M)": "trap",
-    "Triangular (L–M–H)": "tri",
-}
-forma_key = mapa_forma[forma_lbl]
-
+forma_key = "tri" if modo_triangular else "trap"
 
 if submit:
-    warns = []
-    if (np.isnan(vmin) or np.isnan(vavg) or np.isnan(vmax) or
-        np.isinf(vmin) or np.isinf(vavg) or np.isinf(vmax)):
-        st.error("Entradas no válidas (NaN/∞). Corrija los valores.")
-        st.stop()
-
-    orig = (vmin, vavg, vmax)
-    vals = sorted([vmin, vavg, vmax])
-    if tuple(vals) != orig:
-        warns.append("Se reordenaron valores para cumplir mín ≤ prom ≤ máx.")
-    vmin, vavg, vmax = vals
-
-    if np.isclose(vmin, vavg) and np.isclose(vavg, vmax):
-        warns.append("Los tres valores son iguales; se amplía el rango mínimamente para graficar.")
-        vmin -= 0.5
-        vmax += 0.5
-
-    if warns:
-        for w in warns:
-            st.warning(w)
-
     try:
-        # Fuzzificación y combinación (L, M, H) sobre el universo x
+        # Validaciones y normalización
+        if modo_triangular:
+            if (np.isnan(vmin) or np.isnan(vavg) or np.isnan(vmax) or
+                np.isinf(vmin) or np.isinf(vavg) or np.isinf(vmax)):
+                st.error("Entradas no válidas (NaN/∞).")
+                st.stop()
+            vals = sorted([vmin, vavg, vmax])
+            if tuple(vals) != (vmin, vavg, vmax):
+                st.warning("Se reordenaron valores para cumplir mín ≤ prom ≤ máx.")
+            vmin, vavg, vmax = vals
+            if np.isclose(vmin, vavg) and np.isclose(vavg, vmax):
+                st.warning("Los tres valores son iguales; se amplía el rango para graficar.")
+                vmin -= 0.5; vmax += 0.5
+        else:
+            if np.any(~np.isfinite(datos_arr)):
+                st.error("Hay datos no válidos (NaN/∞).")
+                st.stop()
+            datos_arr = np.sort(datos_arr)
+            vmin, vmax, vavg = float(datos_arr[0]), float(datos_arr[-1]), float(np.mean(datos_arr))
+            if np.isclose(vmin, vmax):
+                st.warning("Todos los datos son iguales; se amplía el rango para graficar.")
+                vmin -= 0.5; vmax += 0.5
+
+        # Fuzzificación y combinación
         fig, x, L, M, H, comb = fuzificar_resumen(vmin, vavg, vmax, forma=forma_key)
 
-        # Submuestreo ligero para rangos pequeños
-        span = max(vmax - vmin, 1e-9)
-        step = 2 if span < 20 else 1
-        xs = x[::step]; Ls = L[::step]; Ms = M[::step]; Hs = H[::step]; combs = comb[::step]
-
-        # Desdifusificación (valor crisp) y cuartiles aproximados
+        # Desdifusificación
         Q1, Q2, Q3 = q_from_min_prom_max(vmin, vavg, vmax)
         valor = float(desdifuzificar(x, comb, metodo=metodo_key))
 
-        # Grados de membresía en el valor representativo
+        # Grados de membresía en el valor (para Detalles)
         mu_L = float(fuzz.interp_membership(x, L, valor))
         mu_M = float(fuzz.interp_membership(x, M, valor))
         mu_H = float(fuzz.interp_membership(x, H, valor))
 
         _marcar_valor_y_cuartiles(fig, x, L, M, H, valor, (Q1, Q2, Q3))
 
-        # Pestañas de salida
+        # Salidas
         t_plot, t_res, t_det = st.tabs(["Gráfica", "Resultados", "Detalles"])
-
         with t_plot:
             st.plotly_chart(fig, use_container_width=True)
 
+        # =================== RESULTADOS (limpio, grande) ===================
         with t_res:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Valor representativo", f"{valor:,.2f}")
-            c2.metric("μ(Baja) en valor", f"{mu_L:.2f}")
-            c3.metric("μ(Media) en valor", f"{mu_M:.2f}")
-            c4.metric("μ(Alta) en valor",  f"{mu_H:.2f}")
-
             grados = np.array([mu_L, mu_M, mu_H])
             mayor = float(np.max(grados))
             segundo = float(np.partition(grados, -2)[-2])
             margen = mayor - segundo
 
-            if margen < float(umbral_margen):
-                dictamen = "Inestable"
-            else:
-                etiquetas = ["Baja", "Media", "Alta"]
-                dictamen = etiquetas[int(np.argmax(grados))]
+            dictamen = "Inestable" if margen < float(umbral_margen) else ["Baja","Media","Alta"][int(np.argmax(grados))]
+            # Píldora de color
+            pill_class = {
+                "Baja": "pill-baja",
+                "Media": "pill-media",
+                "Alta": "pill-alta",
+                "Inestable": "pill-inst"
+            }[dictamen]
 
-            # Estabilidad basada en la amplitud relativa del rango
-            c1_thr = 0.35 * float(sensibilidad)
-            c2_thr = 0.75 * float(sensibilidad)
-            spread = (vmax - vmin) / max(vavg, 1e-9)
-            if spread < c1_thr:
-                variacion_txt = "variación baja → alta estabilidad."
-            elif spread < c2_thr:
-                variacion_txt = "variación moderada → estabilidad consistente."
-            else:
-                variacion_txt = "variación alta → posible inestabilidad."
+            # KPI grande
+            st.markdown(f"""
+            <div class="kpi">
+              <div class="kpi-label">Valor desdifusificado</div>
+              <div class="kpi-value">{valor:,.2f}</div>
+              <div class="pill {pill_class}">{dictamen}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
+            # Interpretación en palabras (objetivo lingüístico)
             if dictamen == "Baja":
-                recomendacion = f"Nivel de ventas bajo; {variacion_txt} Revise inventario/precios y considere promoción puntual."
+                interpretacion = "Los valores se comportan predominantemente como BAJOS en la escala Baja–Media–Alta."
             elif dictamen == "Media":
-                recomendacion = f"Promedio centrado; {variacion_txt} Mantenga estrategia y monitoree."
+                interpretacion = "Los valores se concentran alrededor de un NIVEL MEDIO en la escala Baja–Media–Alta."
             elif dictamen == "Alta":
-                recomendacion = f"Nivel de ventas alto; {variacion_txt} Refuerce campañas y prepare inventario."
+                interpretacion = "Los valores se comportan predominantemente como ALTOS en la escala Baja–Media–Alta."
             else:
-                recomendacion = "Resultados inestables: ventas sin concentración clara. Revise estacionalidad y factores externos."
+                interpretacion = "No hay una categoría dominante; la pertenencia es ambigua y sujeta a mayor revisión."
 
-            st.markdown(f"**Dictamen:** {dictamen}")
-            st.caption(recomendacion)
+            st.markdown(f"*Interpretación difusa:* {interpretacion}")
 
+        # =================== DETALLES (μ y cuartiles) ===================
         with t_det:
-            st.subheader("Cuartiles (aprox. desde mín–prom–máx)")
-            cqa, cqb, cqc = st.columns(3)
-            cqa.metric("Q1", f"{Q1:,.2f}")
-            cqb.metric("Q2 (≈ mediana)", f"{Q2:,.2f}")
-            cqc.metric("Q3", f"{Q3:,.2f}")
+            st.subheader("Pertenencias en el valor desdifusificado")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("μ(Baja)", f"{mu_L:.2f}")
+            c2.metric("μ(Media)", f"{mu_M:.2f}")
+            c3.metric("μ(Alta)",  f"{mu_H:.2f}")
 
-        # Persistencia y descarga
+            st.subheader("Cuartiles (aprox. desde mín–prom–máx)")
+            d1, d2, d3 = st.columns(3)
+            d1.metric("Q1", f"{Q1:,.2f}")
+            d2.metric("Q2 (≈ mediana)", f"{Q2:,.2f}")
+            d3.metric("Q3", f"{Q3:,.2f}")
+
+            if not modo_triangular:
+                st.markdown("**Resumen de los datos (modo trapezoidal):**")
+                st.write(pd.DataFrame({"dato": datos_arr}))
+
+        # Persistencia
         st.session_state.ultimo = {
             "vmin": float(vmin), "vavg": float(vavg), "vmax": float(vmax),
             "metodo": metodo_key, "forma": forma_key,
-            "sensibilidad": float(sensibilidad),
-            "umbral_margen": float(umbral_margen)
+            "sensibilidad": float(sensibilidad), "umbral_margen": float(umbral_margen)
         }
 
+        # Descarga
         data = {
-            "venta_min": [vmin],
-            "venta_prom": [vavg],
-            "venta_max": [vmax],
+            "modo": ["triangular" if modo_triangular else "trapezoidal"],
+            "dato_min": [vmin], "dato_prom": [vavg], "dato_max": [vmax],
             "Q1": [Q1], "Q2": [Q2], "Q3": [Q3],
-            "forma": [forma_lbl],
             "metodo": [metodo],
+            "forma_LMH": ["Triangular" if forma_key == "tri" else "Trapezoidal"],
             "valor_representativo": [valor],
             "mu_baja_en_valor": [round(mu_L, 4)],
             "mu_media_en_valor": [round(mu_M, 4)],
             "mu_alta_en_valor": [round(mu_H, 4)],
             "margen_dominancia": [round(margen, 4)],
-            "spread": [round(spread, 4)],
             "sensibilidad": [float(sensibilidad)],
             "umbral_margen": [float(umbral_margen)],
-            "dictamen": [dictamen],
-            "recomendacion": [recomendacion],
+            "dictamen": [dictamen]
         }
         df = pd.DataFrame(data)
-        csv = df.to_csv(index=False).encode("utf-8")
         st.download_button(
             "Descargar reporte (CSV)",
-            data=csv,
+            data=df.to_csv(index=False).encode("utf-8"),
             file_name="diagnostico_difuso.csv",
             mime="text/csv",
             use_container_width=True
