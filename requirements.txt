@@ -4,3 +4,4 @@ pandas>=2.0,<3
 scikit-fuzzy==0.5.0
 plotly>=5.18,<6
 streamlit>=1.30,<2
+openpyxl>=3.1.2,<4

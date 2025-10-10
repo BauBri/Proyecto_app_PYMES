@@ -8,9 +8,12 @@ from base_difusa import (
     ConjuntoDifuso, evaluar_multiconjuntos, estimar_parametros,
     construir_membresia
 )
+# Lectura de la plantilla
+from lectura_datos import leer_conjuntos_multi_atributo
 
 st.set_page_config(
     page_title="Estimador de datos con Lógica difusa",
+    page_icon="unam_logo.png",  
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -40,11 +43,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Utilidades de sensibilidad
-EPS = 1e-9  # Epsilon numérico para garantizar monotonía estricta
+# Utilidades
+EPS = 1e-9
 
 def _fix_monotonic(vals):
-    """Asegura que los parámetros queden estrictamente crecientes."""
     arr = list(vals)
     for i in range(1, len(arr)):
         if arr[i] <= arr[i-1]:
@@ -52,22 +54,18 @@ def _fix_monotonic(vals):
     return tuple(arr)
 
 def _ajusta_por_sens(params, tipo, s):
-    """Escala el ancho de la membresía alrededor de su centro: s<1 estrecha, s>1 ensancha."""
     if s is None or s == 1.0:
         return params
-
     if tipo == "gauss":
         m, sigma = params
         sigma = max(sigma * float(s), 1e-9)
         return (float(m), float(sigma))
-
-    if tipo == "tri":  # (a, b, c)
+    if tipo == "tri":
         a, b, c = map(float, params)
         a2 = b - (b - a) * s
         c2 = b + (c - b) * s
         return _fix_monotonic((a2, b, c2))
-
-    if tipo in ("trap", "pi"):  # (a, b, c, d)
+    if tipo in ("trap", "pi"):
         a, b, c, d = map(float, params)
         mid = (b + c) / 2.0
         a2 = mid - (mid - a) * s
@@ -75,17 +73,15 @@ def _ajusta_por_sens(params, tipo, s):
         c2 = mid + (c - mid) * s
         d2 = mid + (d - mid) * s
         return _fix_monotonic((a2, b2, c2, d2))
-
-    if tipo in ("gamma", "l"):  # (a, b)
+    if tipo in ("gamma", "l"):
         a, b = map(float, params)
         m = (a + b) / 2.0
         a2 = m - (m - a) * s
         b2 = m + (b - m) * s
         return _fix_monotonic((a2, b2))
-
     return params
 
-# Estado de la aplicación
+# Estado
 if "ultimo" not in st.session_state:
     st.session_state.ultimo = {"metodo": "centroid"}
 if "num_conjuntos" not in st.session_state:
@@ -93,7 +89,7 @@ if "num_conjuntos" not in st.session_state:
 if "sens" not in st.session_state:
     st.session_state.sens = 1.0
 
-# Catálogo de funciones de membresía
+# Membresías
 opciones_memb = [
     "Triangular (tri)", "Trapezoidal (trap)", "Gamma/S (smf)",
     "L/Z (zmf)", "Π (pimf)", "Gaussiana (gauss)"
@@ -107,7 +103,51 @@ map_memb = {
     "Gaussiana (gauss)": "gauss",
 }
 
-# Barra lateral: modo, método y sensibilidad
+def _plantilla_multi_df() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Conjunto 1": [0.0, 0.5, 1.0],
+        "Conjunto 2": [0.1, 0.6, 0.9],
+        "Conjunto 3": [0.0, 0.4, 1.0],
+    })
+
+def _df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "datos") -> bytes:
+    from io import BytesIO
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# Vaciado y aplicación de datos cargados a la UI
+def _limpiar_campos_multi():
+    # Elimina claves de nombre, N y datos para evitar residuos cuando se cargan nuevos conjuntos.
+    borrar = [k for k in st.session_state.keys() if k.startswith(("nm_", "N_", "d_"))]
+    for k in borrar:
+        del st.session_state[k]
+
+def _aplicar_sets_a_ui(sets):
+    # Actualiza número de conjuntos y rellena nombre, N y cada dato.
+    _limpiar_campos_multi()
+    nombres = list(sets.keys())
+    st.session_state.num_conjuntos = len(nombres)
+    for i, nombre in enumerate(nombres):
+        vals = list(sets[nombre])
+        st.session_state[f"nm_{i}"] = str(nombre)
+        st.session_state[f"N_{i}"] = int(len(vals))
+        for j, v in enumerate(vals):
+            st.session_state[f"d_{i}_{j}"] = float(v)
+
+def _token_archivo(archivo) -> str:
+    nombre = getattr(archivo, "name", "")
+    size = getattr(archivo, "size", None)
+    if size is None:
+        try:
+            size = len(archivo.getvalue())
+        except Exception:
+            size = ""
+    return f"{nombre}:{size}"
+
+# Barra lateral
 with st.sidebar:
     modo = st.selectbox(
         "Modo de trabajo",
@@ -140,6 +180,43 @@ with st.sidebar:
         help="0.50 = estrecho; 1.00 = normal; 1.50 = ancho"
     )
     s_factor = float(st.session_state.sens)
+
+    # Subir datos (solo visible en multi-atributo)
+    if "multi-atributo" in modo:
+        with st.expander("Subir datos"):
+            st.markdown(
+                """
+**Instrucciones**
+- Descarga la plantilla. Cada columna es un conjunto.
+- Escribe solo números. El encabezado de cada columna es el nombre del conjunto.
+- Puedes dejar celdas vacías al final de una columna.
+- Guarda en .xlsx o .csv y súbelo. La app llenará los campos automáticamente.
+                """
+            )
+            st.download_button(
+                "Descargar plantilla",
+                data=_df_to_xlsx_bytes(_plantilla_multi_df()),
+                file_name="plantilla_multiatributo.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            archivo = st.file_uploader(
+                "Sube tu archivo (.xlsx o .csv)",
+                type=["xlsx", "csv"],
+                accept_multiple_files=False
+            )
+            if archivo is not None:
+                token = _token_archivo(archivo)
+                if st.session_state.get("last_upload_token") != token:
+                    try:
+                        sets = leer_conjuntos_multi_atributo(archivo)  # {nombre: [valores]}
+                        _aplicar_sets_a_ui(sets)                      # aplica una sola vez
+                        st.session_state["last_upload_token"] = token
+                        st.success("Datos cargados en la interfaz.")
+                    except Exception as e:
+                        st.error(f"Archivo inválido: {e}")
+                else:
+                    st.info("Este archivo ya fue aplicado. Para recargarlo, vuelve a subirlo o limpia todos.")
 
 # Modo simple
 if modo.startswith("Un solo"):
@@ -182,7 +259,6 @@ if modo.startswith("Un solo"):
                 sug = (a, b, c, d)
             else:
                 sug = (float(np.mean(datos_simple)), max(1e-3, float(np.std(datos_simple) or 0.1)))
-
         if tipo_simple == "tri":
             a = st.number_input("a", value=float(sug[0]), format="%.4f", key="a_s")
             b = st.number_input("b", value=float(sug[1]), format="%.4f", key="b_s")
@@ -265,6 +341,8 @@ else:
         st.session_state.num_conjuntos -= 1
     if cols_btn[2].button("Limpiar todos", use_container_width=True):
         st.session_state.num_conjuntos = 1
+        _limpiar_campos_multi()
+        st.session_state.pop("last_upload_token", None)  # limpia el token del último archivo aplicado
 
     conjuntos = []
     tabs_c = st.tabs([f"Conjunto {i+1}" for i in range(st.session_state.num_conjuntos)])
@@ -370,12 +448,10 @@ else:
 
         mu_union = np.maximum.reduce(mus)
 
-        # Valores crisp por conjunto para la tabla
         crisp_por_conjunto, _ = evaluar_multiconjuntos(
             conjuntos=conjuntos, metodo=metodo_key, pesos=None, agregacion="media"
         )
 
-        # Valor global de la unión
         total = float(desdifuzificar(x, mu_union, metodo=metodo_key))
 
         tabs_out = st.tabs(["Resultado", "Gráficas", "Tabla"])
@@ -413,7 +489,6 @@ else:
             })
             st.dataframe(df, use_container_width=True)
 
-        # Detalles de la curva de unión
         with st.expander("Detalles avanzados: tabla de la unión"):
             dfu = pd.DataFrame({"x": x, "mu_union": mu_union})
             st.dataframe(dfu.iloc[::200, :], use_container_width=True)
