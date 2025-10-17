@@ -459,7 +459,7 @@ else:
         with tabs_out[0]:
             st.markdown(f"""
             <div class="kpi">
-              <div class="kpi-label">Valor desdifuzificado de la UNIÓN (máx)</div>
+              <div class="kpi-label">Valor desdifuzificado: </div>
               <div class="kpi-value">{total:,.4f}</div>
               <div class="pill">Método: {metodo_key}</div>
               <div class="pill">Sensibilidad: {s_factor:.2f}×</div>
